@@ -1,0 +1,20 @@
+version = 1
+SPDX-PackageName = "pkcs11-to-cmd"
+
+[[annotations]]
+path = "tests/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 Siemens"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = [".devcontainer/**", ".github/**", ".vscode/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 Siemens"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = ["CODEOWNERS", ".clang-format", ".clangd", ".editorconfig", ".gitignore", ".markdownlint.jsonc"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 Siemens"
+SPDX-License-Identifier = "MIT"

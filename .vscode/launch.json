@@ -1,0 +1,133 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug ssh-keygen",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/usr/bin/ssh-keygen",
+            "args": [
+                "-s",
+                "${workspaceFolder}/tests/data/my_rsa_0.openssh.pub",
+                "-D",
+                "${workspaceFolder}/build/libpkcs11-to-cmd.so",
+                "-I",
+                "test_user",
+                "-n",
+                "testuser",
+                "-z",
+                "1",
+                "${workspaceFolder}/tests/data/test-ssh-key.pub"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                {
+                    "name": "P2C_SLOT_CERT_0",
+                    "value": "${workspaceFolder}/tests/data/my_rsa_0.pem"
+                },
+                {
+                    "name": "P2C_DATA",
+                    "value": "/tmp/data.bin"
+                },
+                {
+                    "name": "P2C_SIG",
+                    "value": "/tmp/data.sig"
+                },
+                {
+                    "name": "P2C_CMD",
+                    "value": "${workspaceFolder}/tests/data/sign-cmd.sh"
+                }
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        // pkcs11-tool --module "$PKCS11_MODULE" -r --type pubkey --slot 0 --label "$TOKEN_LABEL" -o "$PUBLIC_KEY_FILE.der"
+        {
+            "name": "Debug pkcs11-tool export public key",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/usr/bin/pkcs11-tool",
+            "args": [
+                "--module",
+                "${workspaceFolder}/build/libpkcs11-to-cmd.so",
+                "-r",
+                "--type",
+                "pubkey",
+                "--slot",
+                "0",
+                "--label",
+                "pkcs11-to-cmd-0"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                {
+                    "name": "P2C_SLOT_CERT_0",
+                    "value": "${workspaceFolder}/tests/data/my_rsa_0.pem"
+                },
+                {
+                    "name": "P2C_SLOT_CERT_1",
+                    "value": "${workspaceFolder}/tests/data/my_rsa_1.pem"
+                }
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        // P2C_CMD=tests/data/sign-cmd.sh P2C_DATA=/tmp/data.bin P2C_SIG=/tmp/data.sig RAUC_PKCS11_PIN=1234 P2C_SLOT_CERT_0=tests/data/my_rsa_0.pem RAUC_PKCS11_MODULE=build/libpkcs11-to-cmd.so rauc resign --no-verify --key "pkcs11:serial=sn-0" --cert tests/data/my_rsa_0.pem --signing-keyring tests/data/my_rsa_0.pem unencrypted-crypt-bundle-bundle.raucb unencrypted-crypt-bundle-bundle.raucb-resigned
+        {
+            "name": "Debug rauc resign",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/usr/bin/rauc",
+            "args": [
+                "resign",
+                "--no-verify",
+                "--key",
+                "pkcs11:serial=sn-0",
+                "--cert",
+                "${workspaceFolder}/tests/data/my_rsa_0.pem",
+                "--signing-keyring",
+                "${workspaceFolder}/tests/data/my_rsa_0.pem",
+                "${workspaceFolder}/unencrypted-crypt-bundle-bundle.raucb",
+                "${workspaceFolder}/unencrypted-crypt-bundle-bundle.raucb-resigned"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                {
+                    "name": "P2C_SLOT_CERT_0",
+                    "value": "${workspaceFolder}/tests/data/my_rsa_0.pem"
+                },
+                {
+                    "name": "RAUC_PKCS11_MODULE",
+                    "value": "${workspaceFolder}/build/libpkcs11-to-cmd.so"
+                },
+                {
+                    "name": "RAUC_PKCS11_PIN",
+                    "value": "1234"
+                }
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,21 @@
+@startuml
+rectangle "pkcs11-tool" as tool <<app>> #ccc 
+rectangle "pkcs11-to-cmd" as cmd <<PKCS#11 module>> #cec
+rectangle "signing-adapter-script.sh" as app <<app>> #ccc
+file "my_cert.pem" as cert <<x509 certificate>>
+file "data.bin" as data <<binary>>
+file "data.sig" as sig <<binary>>
+rectangle "P2C_SLOT_CERT_0=my_cert.pem\nP2C_CMD=signing-adapter-script.sh\nP2C_DATA=data.bin\nP2C_SIG=data.sig" as env <<environment variables>>
+rectangle "3rd party signing" as third <<app>> #ccc
+
+tool -r-> cmd : PKCS#11 calls
+cmd -r-> app : execute 
+cmd -u-> cert: \lread\nkey\ninformation
+cmd -d-> env: \lget P2C_SLOT_CERT_0, P2C_CMD, P2C_DATA, P2C_SIG\nset P2C_CERT, P2C_MECHANISM
+cmd -u-> data : write
+cmd -u-> sig : read
+app -u-> sig : write
+app -u-> data : read
+app -d-> env: get P2C_DATA, P2C_SIG, P2C_CERT
+app -r-> third : execute
+@enduml

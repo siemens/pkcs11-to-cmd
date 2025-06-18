@@ -1,0 +1,45 @@
+{
+    "name": "pkcs-to-cmd-devcontainer",
+    "build": {
+        "dockerfile": "../docker/Dockerfile",
+        "context": ".."
+    },
+    "initializeCommand": "touch .docker_bash_history",
+    "mounts": [
+        "source=${localWorkspaceFolder}/.docker_bash_history,target=/home/${localEnv:USER}/.bash_history,type=bind,consistency=cached",
+        "source=${localEnv:HOME}${localEnv:USERPROFILE}/.ssh,target=/home/${localEnv:USER}/.ssh,type=bind,consistency=cached"
+    ],
+    "workspaceFolder": "${localWorkspaceFolder}",
+    "workspaceMount": "source=${localWorkspaceFolder},target=${localWorkspaceFolder},type=bind",
+    "remoteUser": "${localEnv:USER}",
+    "remoteEnv": {
+        "CCACHE_DIR": "${containerWorkspaceFolder}/.ccache",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "ccache",
+        "COVERAGE_DIR": "${containerWorkspaceFolder}/.coverage",
+        "COVERAGE_SORCE_DIR": "${containerWorkspaceFolder}",
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "twxs.cmake",
+                "eamodio.gitlens",
+                "llvm-vs-code-extensions.vscode-clangd",
+                "ms-vscode.cpptools",
+                "ryanluker.vscode-coverage-gutters",
+                "DavidAnson.vscode-markdownlint",
+                "shd101wyy.markdown-preview-enhanced",
+                "streetsidesoftware.code-spell-checker",
+                "EditorConfig.EditorConfig"
+            ]
+        }
+    },
+    "features": {
+        "ghcr.io/devcontainers-contrib/features/bash-command": {
+            "command": "apt-get update && apt-get install -y --no-install-recommends git ssh gcc make gdb clangd nano sudo && groupadd --gid 1000 $_REMOTE_USER && useradd --uid 1000 --gid 1000 -m $_REMOTE_USER -s /bin/bash && echo $_REMOTE_USER ALL=\\(root\\) NOPASSWD:ALL > /etc/sudoers.d/$_REMOTE_USER && chmod 0440 /etc/sudoers.d/$_REMOTE_USER"
+        },
+        "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+    },
+    "runArgs": [
+        "--network=host"
+    ]
+}

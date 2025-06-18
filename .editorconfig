@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: (C) 2025 Siemens
+# SPDX-License-Identifier: MIT
+
+[*]
+end_of_line = lf
+insert_final_newline = true
