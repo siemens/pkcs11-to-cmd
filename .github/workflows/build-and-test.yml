@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: (C) 2025 Siemens
+#
+# Authors:
+#  Eugen Kremer <eugen.kremer@siemens.com>
+
+name: Build and Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    container:
+      image: gcc:14.2.0-bookworm
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        apt update --fix-missing
+        apt install -y --no-install-recommends cmake ccache lcov \
+          libp11-kit-dev \
+          bsdextrautils opensc libengine-pkcs11-openssl dumpasn1 gnutls-bin squashfs-tools rauc python3-pip
+        pip3 install reuse --break-system-packages
+    
+    - name: Configure and build
+      run: |
+        cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+        cmake --build build -j $(nproc)
+    
+    - name: Run tests
+      run: ./tests/runner.sh
+    
+    - name: Generate coverage report
+      if: success()
+      run: |
+        lcov --capture --directory build --output-file coverage.info
+        lcov --remove coverage.info '/usr/*' --output-file coverage.info
+        lcov --list coverage.info
+    
+    - name: Upload coverage to artifacts
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: coverage.info
