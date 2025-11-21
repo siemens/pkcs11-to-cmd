@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2025 Siemens
+# SPDX-License-Identifier: MIT
+
 version = 1
 SPDX-PackageName = "pkcs11-to-cmd"
 
@@ -15,6 +18,12 @@ SPDX-License-Identifier = "MIT"
 
 [[annotations]]
 path = ["CODEOWNERS", ".clang-format", ".clangd", ".editorconfig", ".gitignore", ".markdownlint.jsonc"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 Siemens"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = ["docs/*.png", "docs/*.svg", "docs/*.puml"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2025 Siemens"
 SPDX-License-Identifier = "MIT"
