@@ -47,9 +47,41 @@ jobs:
         lcov --remove coverage.info '/usr/*' --output-file coverage.info
         lcov --list coverage.info
     
+        COVERAGE=$(lcov --summary coverage.info 2>&1 | grep "lines......" | awk '{print $2}' | sed 's/%//')
+        echo "Coverage: $COVERAGE%"
+        
+        # Determine badge color using awk
+        COLOR=$(awk -v cov="$COVERAGE" 'BEGIN {
+          if (cov >= 80) print "brightgreen"
+          else if (cov >= 60) print "yellow"
+          else print "red"
+        }')
+        
+        # Create badge JSON for shields.io endpoint
+        mkdir -p badge
+        cat > badge/coverage.json << EOF
+        {
+          "schemaVersion": 1,
+          "label": "coverage",
+          "message": "${COVERAGE}%",
+          "color": "${COLOR}"
+        }
+        EOF
+    
+    - name: Deploy badge to GitHub Pages
+      if: success() && github.ref == 'refs/heads/main'
+      uses: peaceiris/actions-gh-pages@v4
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./badge
+        destination_dir: badge
+        keep_files: true
+    
     - name: Upload coverage to artifacts
       if: success()
       uses: actions/upload-artifact@v4
       with:
         name: coverage-report
-        path: coverage.info
+        path: |
+          coverage.info
+          badge/coverage.json
