@@ -40,7 +40,7 @@ jobs:
     - name: Run tests
       run: ./tests/runner.sh
     
-    - name: Generate coverage report
+    - name: Generate coverage report and badge
       if: success()
       run: |
         lcov --capture --directory build --output-file coverage.info
@@ -57,16 +57,10 @@ jobs:
           else print "red"
         }')
         
-        # Create badge JSON for shields.io endpoint
+       
+        # Download SVG badge from shields.io
         mkdir -p badge
-        cat > badge/coverage.json << EOF
-        {
-          "schemaVersion": 1,
-          "label": "coverage",
-          "message": "${COVERAGE}%",
-          "color": "${COLOR}"
-        }
-        EOF
+        curl -o badge/coverage.svg "https://img.shields.io/badge/coverage-${COVERAGE}%25-${COLOR}"
     
     - name: Deploy badge to GitHub Pages
       if: success() && github.ref == 'refs/heads/main'
@@ -76,12 +70,3 @@ jobs:
         publish_dir: ./badge
         destination_dir: badge
         keep_files: true
-    
-    - name: Upload coverage to artifacts
-      if: success()
-      uses: actions/upload-artifact@v4
-      with:
-        name: coverage-report
-        path: |
-          coverage.info
-          badge/coverage.json
