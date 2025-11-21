@@ -7,6 +7,8 @@ Authors:
 -->
 # PKCS11-TO-CMD - Externalize PKCS#11 operations to a CLI
 
+![coverage](https://raw.githubusercontent.com/siemens/pkcs11-to-cmd/refs/heads/gh-pages/badge/coverage.svg)
+
 The `pkcs11-to-cmd` is a `PKCS#11` module which allows [PKCS#11](https://docs.oasis-open.org/pkcs11/pkcs11-base/v3.0/pkcs11-base-v3.0.html) operations to be performed via command line tools. This is useful for environments where other tools expect signing operations through PKCS#11 modules but your actual infrastructure does not have a corresponding PKCS#11 module but a CLI interface. The `pkcs11-to-cmd` acts as a bridge, translating PKCS#11 calls into shell commands that interact with a given `command line application`. In order to achive the goal `pkcs11-to-cmd` tries to retrieve missing information about the used key from provided `x509` certificate.
 
 ![Context View](docs/context-view.png)
