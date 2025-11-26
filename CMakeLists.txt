@@ -15,6 +15,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(COVERAGE "Build with coverage" ON)
 
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(P11Kit REQUIRED p11-kit-1)
+
 if(COVERAGE)
     message(STATUS "Compiling test targets with coverage enabled")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} --coverage -fprofile-update=atomic")
@@ -25,5 +29,5 @@ file(GLOB_RECURSE SRC_FILES src/*.cpp)
 
 add_library(pkcs11-to-cmd SHARED ${SRC_FILES})
 
-target_link_libraries(pkcs11-to-cmd PRIVATE pthread)
-target_include_directories(pkcs11-to-cmd PRIVATE /usr/include/p11-kit-1/p11-kit)
+target_link_libraries(pkcs11-to-cmd PRIVATE OpenSSL::Crypto pthread)
+target_include_directories(pkcs11-to-cmd PRIVATE ${P11Kit_INCLUDE_DIRS})

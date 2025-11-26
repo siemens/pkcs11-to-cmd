@@ -11,6 +11,7 @@
 #include "debug.hpp"
 #include "utils.hpp"
 
+#include <cstdlib>
 #include <memory>
 #include <set>
 #include <string>
@@ -21,9 +22,11 @@
 #include <openssl/rsa.h>
 #include <openssl/types.h>
 #include <openssl/x509.h>
-#include <pkcs11.h>
 
-std::string mechanismToString(CK_MECHANISM_TYPE mechanism)
+#define CRYPTOKI_EXPORTS
+#include <p11-kit/pkcs11.h>
+
+static std::string mechanismToString(CK_MECHANISM_TYPE mechanism)
 {
     switch (mechanism) {
     case CKM_RSA_PKCS:
@@ -49,20 +52,20 @@ std::string mechanismToString(CK_MECHANISM_TYPE mechanism)
     case CKM_ECDSA_SHA512:
         return "CKM_ECDSA_SHA512";
     default:
-        debug("Unknown mechanism type: %lu", mechanism);
+        debug("Unknown mechanism type: %#lx", mechanism);
         return std::string("CKM_AS_VALUE_") + std::to_string(mechanism);
     }
 }
 
-CK_RV copy_safe_(CK_VOID_PTR pDest, CK_ULONG_PTR pDestLen, const void* data, size_t data_len)
+static CK_RV copy_safe_(CK_VOID_PTR pDest, CK_ULONG_PTR pDestLen, const void* data, size_t data_len)
 {
+    if (pDestLen == nullptr) {
+        return CKR_ARGUMENTS_BAD;
+    }
+
     if (pDest == nullptr) {
         *pDestLen = data_len;
         return CKR_OK;
-    }
-
-    if (pDestLen == nullptr) {
-        return CKR_ARGUMENTS_BAD;
     }
 
     if (*pDestLen < data_len) {
@@ -77,13 +80,13 @@ CK_RV copy_safe_(CK_VOID_PTR pDest, CK_ULONG_PTR pDestLen, const void* data, siz
 }
 
 template <typename TData>
-CK_RV copy_safe(CK_VOID_PTR pDest, CK_ULONG_PTR pDestLen, const TData& data)
+static CK_RV copy_safe(CK_VOID_PTR pDest, CK_ULONG_PTR pDestLen, const TData& data)
 {
     return copy_safe_(pDest, pDestLen, &data, sizeof(TData));
 }
 
 template <typename TFn, typename TParam>
-CK_RV read_safe(TFn fn, TParam param, CK_VOID_PTR pValue, CK_ULONG_PTR pValueLen)
+static CK_RV read_safe(TFn fn, TParam param, CK_VOID_PTR pValue, CK_ULONG_PTR pValueLen)
 {
     CK_BYTE_PTR buffer = nullptr;
     CK_ULONG len = fn(param, &buffer);
@@ -97,13 +100,13 @@ CK_RV read_safe(TFn fn, TParam param, CK_VOID_PTR pValue, CK_ULONG_PTR pValueLen
 
 extern "C" {
 
-CK_RV C_Finalize(CK_VOID_PTR pReserved)
+CK_RV CK_SPEC C_Finalize(CK_VOID_PTR pReserved)
 {
     debug("C_Finalize called");
     return CKR_OK;
 }
 
-CK_RV C_GetInfo(CK_INFO_PTR pInfo)
+CK_RV CK_SPEC C_GetInfo(CK_INFO_PTR pInfo)
 {
     debug("C_GetInfo called");
     if (!pInfo) {
@@ -111,23 +114,28 @@ CK_RV C_GetInfo(CK_INFO_PTR pInfo)
     }
 
     *pInfo = {};
-    pInfo->cryptokiVersion.major = 2;
-    pInfo->cryptokiVersion.minor = 40;
+    pInfo->cryptokiVersion.major = CRYPTOKI_VERSION_MAJOR;
+    pInfo->cryptokiVersion.minor = CRYPTOKI_VERSION_MINOR;
     strncpy((char*)pInfo->manufacturerID, PROVIDER_NAME, sizeof(pInfo->manufacturerID));
     strncpy((char*)pInfo->libraryDescription, PROVIDER_NAME, sizeof(pInfo->libraryDescription));
-    pInfo->libraryVersion.major = 1;
-    pInfo->libraryVersion.minor = 0;
+    pInfo->libraryVersion.major = PROVIDER_VERSION_MAJOR;
+    pInfo->libraryVersion.minor = PROVIDER_VERSION_MINOR;
     return CKR_OK;
 }
 
-static std::set<enumerable_objects> valid_object_types
-    = { enumerable_objects::public_key, enumerable_objects::private_key, enumerable_objects::certificate };
+static const std::set<object_type, std::less<>> valid_object_types
+    = { object_type::public_key, object_type::private_key, object_type::certificate };
+
+static constexpr CK_SESSION_HANDLE current_slot_session = 1;
+
+struct Session;
+static Session* s_session;
 
 struct Session {
     CK_SLOT_ID slotID;
     std::shared_ptr<X509> slotCertificate = nullptr;
-    std::set<enumerable_objects> foundObjects;
-    std::set<enumerable_objects>::iterator currentObjectIt;
+    std::set<object_type> foundObjects;
+    std::set<object_type>::iterator currentObjectIt;
     std::shared_ptr<FILE> dataFile = nullptr;
 
     static Session* CreateSession(CK_SLOT_ID slotID, const char* slotCertificateFile)
@@ -154,6 +162,14 @@ struct Session {
         return new Session { slotID, slotCertificate };
     };
 
+    static Session* From(CK_SESSION_HANDLE hSession)
+    {
+        if (s_session && hSession == current_slot_session) {
+            return s_session;
+        }
+        return nullptr;
+    }
+
     std::shared_ptr<EVP_PKEY> getPublicKey() const
     {
         EVP_PKEY* pkey = X509_get_pubkey(slotCertificate.get());
@@ -166,7 +182,7 @@ struct Session {
     Session& operator=(Session&&) = delete;
 };
 
-CK_RV C_OpenSession(
+CK_RV CK_SPEC C_OpenSession(
     CK_SLOT_ID slotID, CK_FLAGS flags, CK_VOID_PTR pApplication, CK_NOTIFY notify, CK_SESSION_HANDLE_PTR pSession)
 {
     debug("C_OpenSession called");
@@ -185,46 +201,54 @@ CK_RV C_OpenSession(
         return CKR_SLOT_ID_INVALID;
     }
 
-    *pSession = (CK_SESSION_HANDLE)Session::CreateSession(slotID, slot.c_str());
-    if (!*pSession) {
+    if (s_session) {
+        return CKR_SESSION_COUNT;
+    }
+
+    s_session = Session::CreateSession(slotID, slot.c_str());
+    if (!s_session) {
         return CKR_SLOT_ID_INVALID;
     }
 
+    *pSession = current_slot_session;
+
     return CKR_OK;
 }
 
-CK_RV C_CloseSession(CK_SESSION_HANDLE hSession)
+CK_RV CK_SPEC C_CloseSession(CK_SESSION_HANDLE hSession)
 {
     debug("C_CloseSession called");
-    if (!hSession) {
+    if (!s_session || hSession != current_slot_session) {
         return CKR_SESSION_HANDLE_INVALID;
     }
-    Session* session = (Session*)hSession;
-    delete session;
+    delete s_session;
+    s_session = nullptr;
+
     return CKR_OK;
 }
 
-CK_RV C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType, CK_UTF8CHAR_PTR pPin, CK_ULONG PinLen)
+CK_RV CK_SPEC C_Login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType, CK_UTF8CHAR_PTR pPin, CK_ULONG PinLen)
 {
     debug("C_Login called");
     return CKR_OK;
 }
 
-CK_RV C_Logout(CK_SESSION_HANDLE hSession)
+CK_RV CK_SPEC C_Logout(CK_SESSION_HANDLE hSession)
 {
     debug("C_Logout called");
     return CKR_OK;
 }
 
-CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hObject)
+CK_RV CK_SPEC C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hObject)
 {
     debug("C_SignInit called");
 
-    if (!hSession || !pMechanism) {
+    auto ptr = Session::From(hSession);
+    if (!ptr || !pMechanism) {
         return CKR_ARGUMENTS_BAD;
     }
 
-    Session& session = *(Session*)hSession;
+    Session& session = *ptr;
 
     const char* data_path = getenv(ENV_DATA);
     const char* sig_path = getenv(ENV_SIG);
@@ -253,7 +277,7 @@ CK_RV C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJ
     return CKR_OK;
 }
 
-CK_RV SignUpdate_internal(Session& session, CK_BYTE_PTR pPart, CK_ULONG PartLen)
+static CK_RV SignUpdate_internal(Session& session, CK_BYTE_PTR pPart, CK_ULONG PartLen)
 {
     debug("SignUpdate_internal called");
     if (!session.dataFile) {
@@ -271,21 +295,24 @@ CK_RV SignUpdate_internal(Session& session, CK_BYTE_PTR pPart, CK_ULONG PartLen)
     return CKR_OK;
 }
 
-CK_RV C_SignUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG PartLen)
+CK_RV CK_SPEC C_SignUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG PartLen)
 {
     debug("C_SignUpdate called");
     if (!pPart || PartLen == 0) {
         return CKR_ARGUMENTS_BAD;
     }
 
-    if (!hSession) {
+    auto ptr = Session::From(hSession);
+    if (!ptr) {
         return CKR_SESSION_HANDLE_INVALID;
     }
 
-    return SignUpdate_internal(*(Session*)hSession, pPart, PartLen);
+    Session& session = *ptr;
+
+    return SignUpdate_internal(session, pPart, PartLen);
 }
 
-CK_RV Sign_internal(Session& session, CK_BYTE_PTR pSignature, CK_ULONG_PTR pSignatureLen)
+static CK_RV Sign_internal(Session& session, CK_BYTE_PTR pSignature, CK_ULONG_PTR pSignatureLen)
 {
     debug("sign_internal called");
 
@@ -338,40 +365,46 @@ CK_RV Sign_internal(Session& session, CK_BYTE_PTR pSignature, CK_ULONG_PTR pSign
     return CKR_OK;
 }
 
-CK_RV C_SignFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature, CK_ULONG_PTR pSignatureLen)
+CK_RV CK_SPEC C_SignFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature, CK_ULONG_PTR pSignatureLen)
 {
     debug("C_SignFinal called");
 
-    if (!hSession || !pSignature || !pSignatureLen) {
+    auto ptr = Session::From(hSession);
+    if (!ptr || !pSignature || !pSignatureLen) {
         return CKR_ARGUMENTS_BAD;
     }
 
-    return Sign_internal(*(Session*)hSession, pSignature, pSignatureLen);
+    Session& session = *ptr;
+
+    return Sign_internal(session, pSignature, pSignatureLen);
 }
 
-CK_RV C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG DataLen, CK_BYTE_PTR pSignature,
+CK_RV CK_SPEC C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG DataLen, CK_BYTE_PTR pSignature,
     CK_ULONG_PTR pulSignatureLen)
 {
     debug("C_Sign called");
 
-    if (!hSession) {
+    auto ptr = Session::From(hSession);
+    if (!ptr) {
         return CKR_SESSION_HANDLE_INVALID;
     }
+
+    Session& session = *ptr;
 
     if (!pData || !pulSignatureLen) {
         return CKR_ARGUMENTS_BAD;
     }
 
-    CK_RV res = SignUpdate_internal(*(Session*)hSession, pData, DataLen);
+    CK_RV res = SignUpdate_internal(session, pData, DataLen);
     if (res != CKR_OK) {
         debug("C_Sign: SignUpdate_internal failed with error code %d", res);
         return res;
     }
 
-    return Sign_internal(*(Session*)hSession, pSignature, pulSignatureLen);
+    return Sign_internal(session, pSignature, pulSignatureLen);
 }
 
-CK_RV C_GetSlotList(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList, CK_ULONG_PTR pCount)
+CK_RV CK_SPEC C_GetSlotList(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList, CK_ULONG_PTR pCount)
 {
     debug("C_GetSlotList called");
     if (!pCount) {
@@ -396,7 +429,7 @@ CK_RV C_GetSlotList(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList, CK_ULONG_PT
     return CKR_OK;
 }
 
-CK_RV C_GetSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pSlotInfo)
+CK_RV CK_SPEC C_GetSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pSlotInfo)
 {
     debug("C_GetSlotInfo called");
 
@@ -415,14 +448,14 @@ CK_RV C_GetSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pSlotInfo)
         return CKR_OK;
     }
 
-    *pSlotInfo = { .flags = CKF_TOKEN_PRESENT };
+    *pSlotInfo = { {}, {}, CKF_TOKEN_PRESENT, {}, {} };
     auto descLen = std::min(sizeof(pSlotInfo->slotDescription), slot.size());
     memcpy(pSlotInfo->slotDescription, slot.c_str() + slot.length() - descLen, descLen);
 
     return CKR_OK;
 }
 
-CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
+CK_RV CK_SPEC C_Initialize(CK_VOID_PTR pInitArgs)
 {
     debug("C_Initialize called");
 
@@ -440,7 +473,7 @@ CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
             debug_enabled = std::string(debug_env_var) == "1" || std::string(debug_env_var) == "true"
                 || std::string(debug_env_var) == "yes";
             if (debug_enabled) {
-                debug("Debug is enabledvia environment variable P2C_DEBUG=%s", debug_env_var);
+                debug("Debug is enabled via environment variable P2C_DEBUG=%s", debug_env_var);
             } else {
                 debug("Debug is disabled via environment variable P2C_DEBUG=%s", debug_env_var);
             }
@@ -450,21 +483,15 @@ CK_RV C_Initialize(CK_VOID_PTR pInitArgs)
     return CKR_OK;
 }
 
-static_assert(sizeof(CK_SESSION_HANDLE) >= sizeof(void*),
-    "CK_SESSION_HANDLE type is not big enough to hold a pointer to the Session on this architecture");
+static CK_RV extractKeyAttributeValue(
+    Session& session, CK_ATTRIBUTE_TYPE attr, CK_VOID_PTR pValue, CK_ULONG_PTR pulValueLen, object_type object);
 
-static_assert(sizeof(CK_OBJECT_HANDLE) >= sizeof(enumerable_objects),
-    "CK_OBJECT_HANDLE type is not big enough to hold a pointer to the enumerable_objects on this architecture");
-
-CK_RV extractKeyAttributeValue(
-    Session& session, CK_ATTRIBUTE_TYPE attr, CK_VOID_PTR pValue, CK_ULONG_PTR pulValueLen, enumerable_objects object);
-
-CK_RV extractCommonAttributeValue(
+static CK_RV extractCommonAttributeValue(
     Session& session, CK_ATTRIBUTE_TYPE attr, CK_VOID_PTR pDestValue, CK_ULONG_PTR pValueDestLen)
 {
     switch (attr) {
     case CKA_TOKEN: {
-        return copy_safe(pDestValue, pValueDestLen, CK_TRUE);
+        return copy_safe<CK_BBOOL>(pDestValue, pValueDestLen, CK_TRUE);
     }
 
     case CKA_ID: {
@@ -478,8 +505,10 @@ CK_RV extractCommonAttributeValue(
     }
     case CKA_MODULUS:
     case CKA_PUBLIC_EXPONENT:
+    case CKA_EC_POINT:
+    case CKA_EC_PARAMS:
     case CKA_KEY_TYPE: {
-        return extractKeyAttributeValue(session, attr, pDestValue, pValueDestLen, enumerable_objects::public_key);
+        return extractKeyAttributeValue(session, attr, pDestValue, pValueDestLen, object_type::public_key);
     }
     default: {
         *pValueDestLen = CK_UNAVAILABLE_INFORMATION;
@@ -489,7 +518,7 @@ CK_RV extractCommonAttributeValue(
     return CKR_OK;
 }
 
-CK_RV copyBNAttribute(unsigned char* pDest, CK_ULONG_PTR pulDestLen, const BIGNUM* bn)
+static CK_RV copyBNAttribute(unsigned char* pDest, CK_ULONG_PTR pulDestLen, const BIGNUM* bn)
 {
     CK_ULONG bnLen = BN_num_bytes(bn);
 
@@ -510,26 +539,29 @@ CK_RV copyBNAttribute(unsigned char* pDest, CK_ULONG_PTR pulDestLen, const BIGNU
     return CKR_OK;
 }
 
-CK_RV extractKeyAttributeValue(Session& session, CK_ATTRIBUTE_TYPE attr, CK_VOID_PTR pValueDest,
-    CK_ULONG_PTR pValueDestLen, enumerable_objects object)
+static CK_RV extractKeyAttributeValue(
+    Session& session, CK_ATTRIBUTE_TYPE attr, CK_VOID_PTR pValueDest, CK_ULONG_PTR pValueDestLen, object_type object)
 {
     switch (attr) {
     case CKA_CLASS: {
         CK_OBJECT_CLASS obj_class =
             // rauc signing fails when following is used
-            // object == enumerable_objects::private_key ? CKO_PRIVATE_KEY : CKO_PUBLIC_KEY;
+            // object == object_type::private_key ? CKO_PRIVATE_KEY : CKO_PUBLIC_KEY;
             CKO_PRIVATE_KEY;
         return copy_safe(pValueDest, pValueDestLen, obj_class);
     }
 
-    case CKA_SENSITIVE:
-        return copy_safe(pValueDest, pValueDestLen, CK_TRUE);
+    case CKA_SENSITIVE: {
+        return copy_safe<CK_BBOOL>(pValueDest, pValueDestLen, CK_TRUE);
+    }
 
-    case CKA_EXTRACTABLE:
-        return copy_safe(pValueDest, pValueDestLen, object == enumerable_objects::private_key ? CK_FALSE : CK_TRUE);
+    case CKA_EXTRACTABLE: {
+        return copy_safe<CK_BBOOL>(pValueDest, pValueDestLen, object == object_type::private_key ? CK_FALSE : CK_TRUE);
+    }
 
-    case CKA_SIGN:
-        return copy_safe(pValueDest, pValueDestLen, CK_TRUE);
+    case CKA_SIGN: {
+        return copy_safe<CK_BBOOL>(pValueDest, pValueDestLen, CK_TRUE);
+    }
 
     case CKA_KEY_TYPE: {
         auto pkey = session.getPublicKey();
@@ -552,8 +584,9 @@ CK_RV extractKeyAttributeValue(Session& session, CK_ATTRIBUTE_TYPE attr, CK_VOID
         return copy_safe(pValueDest, pValueDestLen, key_type);
     }
 
-    case CKA_ALWAYS_AUTHENTICATE:
-        return copy_safe(pValueDest, pValueDestLen, CK_FALSE);
+    case CKA_ALWAYS_AUTHENTICATE: {
+        return copy_safe<CK_BBOOL>(pValueDest, pValueDestLen, CK_FALSE);
+    }
 
     case CKA_MODULUS:
     case CKA_PUBLIC_EXPONENT: {
@@ -631,7 +664,7 @@ CK_RV extractKeyAttributeValue(Session& session, CK_ATTRIBUTE_TYPE attr, CK_VOID
     return CKR_OK;
 }
 
-CK_RV extractCertificateAttributeValue(
+static CK_RV extractCertificateAttributeValue(
     Session& session, CK_ATTRIBUTE_TYPE attr, CK_VOID_PTR pValue, CK_ULONG_PTR pValueLen)
 {
     const X509* cert = session.slotCertificate.get();
@@ -641,19 +674,22 @@ CK_RV extractCertificateAttributeValue(
         return copy_safe(pValue, pValueLen, CKO_CERTIFICATE);
     }
 
-    case CKA_PRIVATE:
-        return copy_safe(pValue, pValueLen, CK_FALSE);
+    case CKA_PRIVATE: {
+        return copy_safe<CK_BBOOL>(pValue, pValueLen, CK_FALSE);
+    }
 
     case CKA_CERTIFICATE_TYPE: {
         CK_ULONG type = CKC_X_509;
         return copy_safe(pValue, pValueLen, type);
     }
 
-    case CKA_MODIFIABLE:
-        return copy_safe(pValue, pValueLen, CK_FALSE);
+    case CKA_MODIFIABLE: {
+        return copy_safe<CK_BBOOL>(pValue, pValueLen, CK_FALSE);
+    }
 
-    case CKA_TRUSTED:
-        return copy_safe(pValue, pValueLen, CK_FALSE);
+    case CKA_TRUSTED: {
+        return copy_safe<CK_BBOOL>(pValue, pValueLen, CK_FALSE);
+    }
 
     case CKA_SUBJECT:
         return read_safe(i2d_X509_NAME, X509_get_subject_name(cert), pValue, pValueLen);
@@ -672,15 +708,15 @@ CK_RV extractCertificateAttributeValue(
     return CKR_OK;
 }
 
-CK_RV extractAttributeForObject(
-    Session& session, enumerable_objects object, CK_ATTRIBUTE_TYPE attr, CK_VOID_PTR pValue, CK_ULONG_PTR pulValueLen)
+static CK_RV extractAttributeForObject(
+    Session& session, object_type object, CK_ATTRIBUTE_TYPE attr, CK_VOID_PTR pValue, CK_ULONG_PTR pulValueLen)
 {
     switch (object) {
-    case public_key:
-    case private_key: {
+    case object_type::public_key:
+    case object_type::private_key: {
         return extractKeyAttributeValue(session, attr, pValue, pulValueLen, object);
     }
-    case certificate: {
+    case object_type::certificate: {
         return extractCertificateAttributeValue(session, attr, pValue, pulValueLen);
     }
     default:
@@ -690,11 +726,12 @@ CK_RV extractAttributeForObject(
     return CKR_OBJECT_HANDLE_INVALID;
 }
 
-CK_RV C_GetAttributeValue(
+CK_RV CK_SPEC C_GetAttributeValue(
     CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_ATTRIBUTE_PTR pAttributes, CK_ULONG ulCount)
 {
     debug("C_GetAttributeValue called");
-    if (!hSession) {
+    auto ptr = Session::From(hSession);
+    if (!ptr) {
         return CKR_SESSION_HANDLE_INVALID;
     }
 
@@ -702,28 +739,35 @@ CK_RV C_GetAttributeValue(
         return CKR_ARGUMENTS_BAD;
     }
 
-    Session& session = *(Session*)hSession;
+    Session& session = *ptr;
 
-    if (session.foundObjects.find((enumerable_objects)hObject) == session.foundObjects.end()) {
+    auto it = valid_object_types.find(hObject);
+    if (it == valid_object_types.end()) {
         debug("C_GetAttributeValue: Invalid object handle %lu", hObject);
+        return CKR_OBJECT_HANDLE_INVALID;
+    }
+
+    auto object = *it;
+
+    if (session.foundObjects.find(object) == session.foundObjects.end()) {
+        debug("C_GetAttributeValue: Invalid object %lu", object);
         return CKR_OBJECT_HANDLE_INVALID;
     }
 
     for (CK_ULONG i = 0; i < ulCount; i++) {
         auto& attr = pAttributes[i];
-        debug("C_GetAttributeValue: Getting attribute type=%lu for object=%lu", attr.type, hObject);
-        CK_RV res
-            = extractAttributeForObject(session, (enumerable_objects)hObject, attr.type, attr.pValue, &attr.ulValueLen);
+        debug("C_GetAttributeValue: Getting attribute type=%#lx for object=%lu", attr.type, hObject);
+        CK_RV res = extractAttributeForObject(session, object, attr.type, attr.pValue, &attr.ulValueLen);
         if (res != CKR_OK) {
-            debug("C_GetAttributeValue: Failed to find attribute type=%lu for object=%lu", attr.type, hObject);
+            debug("C_GetAttributeValue: Failed to find attribute type=%#lx for object=%lu", attr.type, hObject);
             return res;
         }
     }
     return CKR_OK;
 }
 
-bool matches(Session& session, enumerable_objects hObject, CK_ATTRIBUTE_PTR findObjectsTemplate,
-    CK_ULONG findObjectsTemplateCount)
+static bool matches(
+    Session& session, object_type object, CK_ATTRIBUTE_PTR findObjectsTemplate, CK_ULONG findObjectsTemplateCount)
 {
     for (CK_ULONG i = 0; i < findObjectsTemplateCount; i++) {
         auto attr = findObjectsTemplate[i];
@@ -737,53 +781,55 @@ bool matches(Session& session, enumerable_objects hObject, CK_ATTRIBUTE_PTR find
 
         CK_ULONG buffer_size = 0;
 
-        auto res = extractAttributeForObject(session, hObject, attr.type, nullptr, &buffer_size);
+        auto res = extractAttributeForObject(session, object, attr.type, nullptr, &buffer_size);
 
         if (res != CKR_OK) {
             return false;
         }
 
         if (buffer_size != attr.ulValueLen) {
-            debug("  Object %d has attribute %lu with size %lu, "
+            debug("  Object %d has attribute %#lx with size %lu, "
                   "but template expects size %lu",
-                hObject, attr.type, buffer_size, attr.ulValueLen);
+                object, attr.type, buffer_size, attr.ulValueLen);
             return false;
         }
 
         std::shared_ptr<unsigned char> buffer(new unsigned char[buffer_size], std::default_delete<unsigned char[]>());
 
-        res = extractAttributeForObject(session, hObject, attr.type, buffer.get(), &buffer_size);
+        res = extractAttributeForObject(session, object, attr.type, buffer.get(), &buffer_size);
         if (res != CKR_OK) {
             return false;
         }
 
         // Compare the attribute value with the template value
         if (memcmp(buffer.get(), attr.pValue, buffer_size) != 0) {
-            debug("  Object %d does not match template attribute %lu", hObject, attr.type);
+            debug("  Object %d does not match template attribute %#lx", object, attr.type);
             return false;
         }
     }
     return true;
 }
 
-CK_RV C_FindObjectsInit(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplates, CK_ULONG ulCount)
+CK_RV CK_SPEC C_FindObjectsInit(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplates, CK_ULONG ulCount)
 {
     debug("C_FindObjectsInit called");
-    if (!hSession) {
+    auto ptr = Session::From(hSession);
+    if (!ptr) {
         return CKR_SESSION_HANDLE_INVALID;
     }
 
-    Session& session = *(Session*)hSession;
-
-    if (pTemplates == nullptr || ulCount == 0) {
-        return CKR_OK;
-    }
+    Session& session = *ptr;
 
     session.foundObjects.clear();
 
-    for (auto it = valid_object_types.begin(); it != valid_object_types.end(); ++it) {
-        if (matches(session, *it, pTemplates, ulCount)) {
-            session.foundObjects.insert(*it);
+    if (ulCount == 0) {
+        // PKCS#11 specification: "To find all objects, set ulCount to 0."
+        session.foundObjects.insert(valid_object_types.begin(), valid_object_types.end());
+    } else if (pTemplates != nullptr) {
+        for (auto object : valid_object_types) {
+            if (matches(session, object, pTemplates, ulCount)) {
+                session.foundObjects.insert(object);
+            }
         }
     }
 
@@ -792,19 +838,20 @@ CK_RV C_FindObjectsInit(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplates,
     return CKR_OK;
 }
 
-CK_RV C_FindObjects(
+CK_RV CK_SPEC C_FindObjects(
     CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE_PTR pObjects, CK_ULONG ulMaxObjectCount, CK_ULONG_PTR pulObjectCount)
 {
     debug("C_FindObjects called");
-    if (!hSession) {
+    auto ptr = Session::From(hSession);
+    if (!ptr) {
         return CKR_SESSION_HANDLE_INVALID;
     }
+
+    Session& session = *ptr;
 
     if (!pObjects || !pulObjectCount) {
         return CKR_ARGUMENTS_BAD;
     }
-
-    Session& session = *(Session*)hSession;
 
     size_t found_objects = 0;
     while (found_objects < ulMaxObjectCount && session.currentObjectIt != session.foundObjects.end()) {
@@ -817,13 +864,13 @@ CK_RV C_FindObjects(
     return CKR_OK;
 }
 
-CK_RV C_FindObjectsFinal(CK_SESSION_HANDLE hSession)
+CK_RV CK_SPEC C_FindObjectsFinal(CK_SESSION_HANDLE hSession)
 {
     debug("C_FindObjectsFinal called");
     return CKR_OK;
 }
 
-CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pTokenInfo)
+CK_RV CK_SPEC C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pTokenInfo)
 {
     debug("C_GetTokenInfo called");
     if (!pTokenInfo) {
@@ -849,7 +896,7 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pTokenInfo)
         (char*)pTokenInfo->serialNumber, ("sn-" + std::to_string(slotID)).c_str(), sizeof(pTokenInfo->serialNumber));
 
     pTokenInfo->flags = CKF_TOKEN_INITIALIZED;
-    pTokenInfo->ulMaxSessionCount = 1;
+    pTokenInfo->ulMaxSessionCount = 1; // simplify code by allowing only 1 session
     pTokenInfo->ulSessionCount = 1;
     pTokenInfo->ulMaxRwSessionCount = 1;
     pTokenInfo->ulRwSessionCount = 1;
@@ -866,13 +913,13 @@ CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pTokenInfo)
     return CKR_OK;
 }
 
-CK_RV C_CloseAllSessions(CK_SLOT_ID slotID)
+CK_RV CK_SPEC C_CloseAllSessions(CK_SLOT_ID slotID)
 {
     debug("C_CloseAllSessions called");
     return CKR_OK;
 }
 
-CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
+CK_RV CK_SPEC C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
 {
     static CK_FUNCTION_LIST functionList = { { 2, 40 }, C_Initialize, C_Finalize, C_GetInfo, C_GetFunctionList,
         C_GetSlotList, C_GetSlotInfo, C_GetTokenInfo, blind_C_GetMechanismList, blind_C_GetMechanismInfo,

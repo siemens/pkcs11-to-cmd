@@ -9,6 +9,8 @@
 #pragma once
 
 constexpr const char* PROVIDER_NAME = "pkcs11-to-cmd";
+constexpr unsigned char PROVIDER_VERSION_MAJOR = 1;
+constexpr unsigned char PROVIDER_VERSION_MINOR = 0;
 constexpr const char* ENV_CMD = "P2C_CMD";
 constexpr const char* ENV_DATA = "P2C_DATA";
 constexpr const char* ENV_SIG = "P2C_SIG";
