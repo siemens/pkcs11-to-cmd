@@ -51,6 +51,8 @@ static std::string mechanismToString(CK_MECHANISM_TYPE mechanism)
         return "CKM_ECDSA_SHA384";
     case CKM_ECDSA_SHA512:
         return "CKM_ECDSA_SHA512";
+    case CKM_EDDSA:
+        return "CKM_EDDSA";
     default:
         debug("Unknown mechanism type: %#lx", mechanism);
         return std::string("CKM_AS_VALUE_") + std::to_string(mechanism);
@@ -578,6 +580,9 @@ static CK_RV extractKeyAttributeValue(
         case EVP_PKEY_EC:
             key_type = CKK_ECDSA;
             break;
+        case EVP_PKEY_ED25519:
+            key_type = CKK_EC_EDWARDS;
+            break;
         default:
             return CKR_ATTRIBUTE_TYPE_INVALID;
         }
@@ -613,7 +618,7 @@ static CK_RV extractKeyAttributeValue(
         if (pkey == nullptr) {
             return CKR_FUNCTION_FAILED;
         }
-        if (EVP_PKEY_base_id(pkey.get()) != EVP_PKEY_EC) {
+        if (auto id = EVP_PKEY_base_id(pkey.get()); id != EVP_PKEY_EC && id != EVP_PKEY_ED25519) {
             return CKR_ATTRIBUTE_TYPE_INVALID;
         }
 
@@ -639,23 +644,31 @@ static CK_RV extractKeyAttributeValue(
         if (pkey == nullptr) {
             return CKR_FUNCTION_FAILED;
         }
-        if (EVP_PKEY_base_id(pkey.get()) != EVP_PKEY_EC) {
+        auto id = EVP_PKEY_base_id(pkey.get());
+        if (id == EVP_PKEY_EC) {
+            char group_name[256];
+            size_t group_name_len = sizeof(group_name);
+            if (!EVP_PKEY_get_utf8_string_param(
+                    pkey.get(), OSSL_PKEY_PARAM_GROUP_NAME, group_name, sizeof(group_name), &group_name_len)) {
+                return CKR_FUNCTION_FAILED;
+            }
+
+            auto group = std::shared_ptr<EC_GROUP>(EC_GROUP_new_by_curve_name(OBJ_txt2nid(group_name)), EC_GROUP_free);
+            if (!group) {
+                return CKR_FUNCTION_FAILED;
+            }
+
+            return read_safe(i2d_ECPKParameters, group.get(), pValueDest, pValueDestLen);
+        } else if (id == EVP_PKEY_ED25519) {
+            auto ed25519_oid = std::shared_ptr<ASN1_OBJECT>(OBJ_nid2obj(EVP_PKEY_ED25519), ASN1_OBJECT_free);
+            if (!ed25519_oid) {
+                return CKR_FUNCTION_FAILED;
+            }
+
+            return read_safe(i2d_ASN1_OBJECT, ed25519_oid.get(), pValueDest, pValueDestLen);
+        } else {
             return CKR_ATTRIBUTE_TYPE_INVALID;
         }
-
-        char group_name[256];
-        size_t group_name_len = sizeof(group_name);
-        if (!EVP_PKEY_get_utf8_string_param(
-                pkey.get(), OSSL_PKEY_PARAM_GROUP_NAME, group_name, sizeof(group_name), &group_name_len)) {
-            return CKR_FUNCTION_FAILED;
-        }
-
-        auto group = std::shared_ptr<EC_GROUP>(EC_GROUP_new_by_curve_name(OBJ_txt2nid(group_name)), EC_GROUP_free);
-        if (!group) {
-            return CKR_FUNCTION_FAILED;
-        }
-
-        return read_safe(i2d_ECPKParameters, group.get(), pValueDest, pValueDestLen);
     }
     default:
         return extractCommonAttributeValue(session, attr, pValueDest, pValueDestLen);

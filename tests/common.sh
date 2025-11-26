@@ -27,6 +27,12 @@ generate_keys() {
     export TEST_EC_KEY="$TEST_KEY_DIR/ec.key"
     export TEST_EC_CERT="$TEST_KEY_DIR/ec.pem"
 
+    echo "Generating ED25519 key and certificate..."
+    openssl genpkey -algorithm ED25519 -out "$TEST_KEY_DIR/ed25519.key"
+    openssl req -new -x509 -key "$TEST_KEY_DIR/ed25519.key" -out "$TEST_KEY_DIR/ed25519.pem" -days 3650 -subj "/CN=Test ED25519 Key"
+    export TEST_ED25519_KEY="$TEST_KEY_DIR/ed25519.key"
+    export TEST_ED25519_CERT="$TEST_KEY_DIR/ed25519.pem"
+
     echo "Generating RSA key and certificate..."
     openssl genpkey -algorithm RSA -out "$TEST_KEY_DIR/rsa.key" -pkeyopt rsa_keygen_bits:2048
     openssl req -new -x509 -key "$TEST_KEY_DIR/rsa.key" -out "$TEST_KEY_DIR/rsa.pem" -days 3650 -subj "/CN=Test RSA Key"
