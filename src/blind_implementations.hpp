@@ -10,13 +10,14 @@
 
 #include "debug.hpp"
 
-#include <pkcs11.h>
+#define CRYPTOKI_EXPORTS
+#include <p11-kit/pkcs11.h>
 
 extern "C" {
 // LCOV_EXCL_START
 // --- PKCS#11 dummy implementations for all functions ---
 #define BLIND_FUNC_IMPL(name, ...)                                                                                     \
-    CK_RV blind_##name(__VA_ARGS__)                                                                                    \
+    CK_RV CK_SPEC blind_##name(__VA_ARGS__)                                                                            \
     {                                                                                                                  \
         debug("blind_" #name " called");                                                                               \
         return CKR_FUNCTION_NOT_SUPPORTED;                                                                             \
