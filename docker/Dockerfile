@@ -10,7 +10,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt update --fix-missing \
     && apt install -y --no-install-recommends cmake ccache lcov \
     libp11-kit-dev \
-    bsdextrautils opensc libengine-pkcs11-openssl dumpasn1 gnutls-bin squashfs-tools rauc python3-pip \
+    bsdextrautils opensc libengine-pkcs11-openssl dumpasn1 gnutls-bin squashfs-tools rauc python3-pip xxd \
     && apt clean \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install reuse --break-system-packages
