@@ -114,7 +114,7 @@ The biggest challenge is to understand how the calling tool tries to find PKCS#1
 The data to be signed is passed from `pkcs11-to-cmd` to the signing script via the `P2C_DATA` environment variable. In order to process the data correctly and create a signature in valid format you need to understand the format of the data passed in and the signature your 3rd party signing tool creates.
 
 ```bash
-dumpasn1 $P2C_DATA
+openssl asn1parse -inform DER -in $P2C_DATA
 ```
 
 Prints  the ASN.1 structure of the data to be signed, which is useful to understand how the data is structured and what fields are present. You could have misleading information that data to be signed is in raw format but the signing tools fails to sign it. Knowing whether the data is already in ASN.1 format helps you to parameterize 3rd party signing tool correctly.

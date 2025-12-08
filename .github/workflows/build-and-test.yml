@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     
     container:
-      image: gcc:14.2.0-bookworm
+      image: gcc:15.2.0-trixie
     
     steps:
     - name: Checkout code
@@ -29,7 +29,7 @@ jobs:
         apt update --fix-missing
         apt install -y --no-install-recommends cmake ccache lcov \
           libp11-kit-dev \
-          bsdextrautils opensc libengine-pkcs11-openssl dumpasn1 gnutls-bin squashfs-tools rauc python3-pip xxd
+          bsdextrautils opensc libengine-pkcs11-openssl gnutls-bin squashfs-tools rauc python3-pip xxd
         pip3 install reuse --break-system-packages
     
     - name: Configure and build
@@ -43,8 +43,7 @@ jobs:
     - name: Generate coverage report and badge
       if: success()
       run: |
-        lcov --capture --directory build --output-file coverage.info
-        lcov --remove coverage.info '/usr/*' --output-file coverage.info
+        lcov --capture --directory build --output-file coverage.info --exclude '/usr/*'
         lcov --list coverage.info
     
         COVERAGE=$(lcov --summary coverage.info 2>&1 | grep "lines......" | awk '{print $2}' | sed 's/%//')

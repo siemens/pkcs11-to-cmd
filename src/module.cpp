@@ -929,6 +929,31 @@ CK_RV CK_SPEC C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pTokenInfo)
 CK_RV CK_SPEC C_CloseAllSessions(CK_SLOT_ID slotID)
 {
     debug("C_CloseAllSessions called");
+
+    if (!s_session || s_session->slotID != slotID) {
+        return CKR_SLOT_ID_INVALID;
+    }
+
+    delete s_session;
+    s_session = nullptr;
+
+    return CKR_OK;
+}
+
+CK_RV CK_SPEC C_GetSessionInfo(CK_SESSION_HANDLE hSession, CK_SESSION_INFO_PTR pInfo)
+{
+    debug("C_GetSessionInfo called");
+
+    auto ptr = Session::From(hSession);
+    if (!ptr || !pInfo) {
+        return CKR_SESSION_HANDLE_INVALID;
+    }
+
+    pInfo->slotID = ptr->slotID;
+    pInfo->state = CKS_RW_USER_FUNCTIONS;
+    pInfo->flags = CKF_RW_SESSION | CKF_SERIAL_SESSION;
+    pInfo->ulDeviceError = 0;
+
     return CKR_OK;
 }
 
@@ -936,9 +961,9 @@ CK_RV CK_SPEC C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList)
 {
     static CK_FUNCTION_LIST functionList = { { 2, 40 }, C_Initialize, C_Finalize, C_GetInfo, C_GetFunctionList,
         C_GetSlotList, C_GetSlotInfo, C_GetTokenInfo, blind_C_GetMechanismList, blind_C_GetMechanismInfo,
-        blind_C_InitToken, blind_C_InitPIN, blind_C_SetPIN, C_OpenSession, C_CloseSession, blind_C_CloseAllSessions,
-        blind_C_GetSessionInfo, blind_C_GetOperationState, blind_C_SetOperationState, C_Login, C_Logout,
-        blind_C_CreateObject, blind_C_CopyObject, blind_C_DestroyObject, blind_C_GetObjectSize, C_GetAttributeValue,
+        blind_C_InitToken, blind_C_InitPIN, blind_C_SetPIN, C_OpenSession, C_CloseSession, C_CloseAllSessions,
+        C_GetSessionInfo, blind_C_GetOperationState, blind_C_SetOperationState, C_Login, C_Logout, blind_C_CreateObject,
+        blind_C_CopyObject, blind_C_DestroyObject, blind_C_GetObjectSize, C_GetAttributeValue,
         blind_C_SetAttributeValue, C_FindObjectsInit, C_FindObjects, C_FindObjectsFinal, blind_C_EncryptInit,
         blind_C_Encrypt, blind_C_EncryptUpdate, blind_C_EncryptFinal, blind_C_DecryptInit, blind_C_Decrypt,
         blind_C_DecryptUpdate, blind_C_DecryptFinal, blind_C_DigestInit, blind_C_Digest, blind_C_DigestUpdate,
