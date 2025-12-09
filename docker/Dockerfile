@@ -4,13 +4,14 @@
 # Authors:
 #  Eugen Kremer <eugen.kremer@siemens.com>
 
-FROM gcc:15.2.0-trixie
+FROM debian:sid-slim
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt update --fix-missing \
     && apt install -y --no-install-recommends cmake ccache lcov \
     libp11-kit-dev \
     bsdextrautils opensc libengine-pkcs11-openssl gnutls-bin squashfs-tools rauc python3-pip xxd \
+    make gcc g++ ssh-client pkg-config libssl-dev python3-cryptography \
     && apt clean \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install reuse --break-system-packages
