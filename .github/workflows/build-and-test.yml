@@ -70,3 +70,27 @@ jobs:
         publish_dir: ./badge
         destination_dir: badge
         keep_files: true
+
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-openssl
+            mingw-w64-ucrt-x86_64-p11-kit
+
+      - name: Build project with CMake (MinGW)
+        shell: msys2 {0}
+        run: |
+          cmake -S $GITHUB_WORKSPACE -B $GITHUB_WORKSPACE/build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Debug
+          cmake --build $GITHUB_WORKSPACE/build -j $(nproc)
