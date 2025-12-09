@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     
     container:
-      image: gcc:15.2.0-trixie
+      image: debian:sid-slim
     
     steps:
     - name: Checkout code
@@ -29,7 +29,8 @@ jobs:
         apt update --fix-missing
         apt install -y --no-install-recommends cmake ccache lcov \
           libp11-kit-dev \
-          bsdextrautils opensc libengine-pkcs11-openssl gnutls-bin squashfs-tools rauc python3-pip xxd
+          bsdextrautils opensc libengine-pkcs11-openssl gnutls-bin squashfs-tools rauc python3-pip xxd \
+          make gcc g++ ssh-client pkg-config libssl-dev python3-cryptography curl
         pip3 install reuse --break-system-packages
     
     - name: Configure and build
